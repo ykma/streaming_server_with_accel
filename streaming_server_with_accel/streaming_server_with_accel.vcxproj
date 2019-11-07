@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -23,7 +23,7 @@
     <ProjectGuid>{7C1D0C66-9246-4D8A-89AB-AE6C4739E399}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>streamingserverwithaccel</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -42,13 +42,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -102,10 +102,13 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(projectDir)\include;C:\Program Files %28x86%29\IntelSWTools\OpenCL\sdk\include;D:\opencv341\opencv\build;D:\opencv341\opencv\sources\include;D:\opencv341\opencv\sources\include\opencv;D:\opencv341\opencv\sources\modules\core\include;D:\opencv341\opencv\sources\modules\flann\include;D:\opencv341\opencv\sources\modules\imgproc\include;D:\opencv341\opencv\sources\modules\objdetect\include;D:\opencv341\opencv\sources\modules\photo\include;D:\opencv341\opencv\sources\modules\video\include;D:\opencv341\opencv\sources\modules\imgcodecs\include;D:\opencv341\opencv\sources\modules\shape\include;D:\opencv341\opencv\sources\modules\videoio\include;D:\opencv341\opencv\sources\modules\highgui\include;D:\opencv341\opencv\sources\modules\superres\include;D:\opencv341\opencv\sources\modules\calib3d\include;D:\opencv341\opencv\sources\modules\stitching\include;D:\opencv341\opencv\sources\modules\videostab\include;D:\opencv341\opencv\sources\modules\world\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(projectDir)\lib;C:\Program Files %28x86%29\IntelSWTools\OpenCL\sdk\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>stitch64.lib;opencl.lib;D:\opencv341\opencv\build\lib\Debug\opencv_world341d.lib;avcodec.lib;avformat.lib;avfilter.lib;avutil.lib;swscale.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -134,19 +137,31 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(projectDir)\..\..\stitch64\stitch64;$(projectDir)\include;C:\Program Files %28x86%29\IntelSWTools\OpenCL\sdk\include;D:\opencv341\opencv\build;D:\opencv341\opencv\sources\include;D:\opencv341\opencv\sources\include\opencv;D:\opencv341\opencv\sources\modules\core\include;D:\opencv341\opencv\sources\modules\flann\include;D:\opencv341\opencv\sources\modules\imgproc\include;D:\opencv341\opencv\sources\modules\objdetect\include;D:\opencv341\opencv\sources\modules\photo\include;D:\opencv341\opencv\sources\modules\video\include;D:\opencv341\opencv\sources\modules\imgcodecs\include;D:\opencv341\opencv\sources\modules\shape\include;D:\opencv341\opencv\sources\modules\videoio\include;D:\opencv341\opencv\sources\modules\highgui\include;D:\opencv341\opencv\sources\modules\superres\include;D:\opencv341\opencv\sources\modules\calib3d\include;D:\opencv341\opencv\sources\modules\stitching\include;D:\opencv341\opencv\sources\modules\videostab\include;D:\opencv341\opencv\sources\modules\world\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>stitch64.lib;OpenCL-intel.lib;opencv_world341.lib;avcodec.lib;avformat.lib;avfilter.lib;avutil.lib;swscale.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(projectDir)\lib;C:\Program Files %28x86%29\IntelSWTools\OpenCL\sdk\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\stitch64\stitch64\clFunction.h" />
+    <ClInclude Include="..\..\stitch64\stitch64\map_keeper.h" />
+    <ClInclude Include="..\..\stitch64\stitch64\oclData.h" />
+    <ClInclude Include="..\..\stitch64\stitch64\utils.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="stitcher_stream_server.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="camnet.cpp" />
+    <ClCompile Include="control_stream.cpp" />
+    <ClCompile Include="decoder.cpp" />
+    <ClCompile Include="encoder.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
