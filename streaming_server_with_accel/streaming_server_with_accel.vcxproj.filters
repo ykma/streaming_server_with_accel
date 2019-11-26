@@ -36,6 +36,12 @@
     <ClInclude Include="..\..\stitch64\stitch64\utils.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="stitching_cl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="priv_proto.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">

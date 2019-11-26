@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string.h>
 #include "stitcher_stream_server.h"
+#include "stitching_cl.h"
 using namespace std;
 
 #define PIPE_RATE (1.0/15)
@@ -26,6 +27,47 @@ DWORD WINAPI encode_deamon(LPVOID lpParameter)
 		}
 		Sleep(1000);
 	}
+	return 0;
+}
+DWORD WINAPI preview_thread(LPVOID lpParameter)
+{
+	SERVER_INFO *si = (SERVER_INFO *)lpParameter;
+	unsigned long long stitch2pip_cnt = 0;
+	unsigned long WriteNum;
+	int offset;
+	cv::Mat rgbImg, std_rgbImg;
+	cv::Mat yuvImg;
+	int height=si->output_height;
+	int width=si->output_width;
+	yuvImg.create(height * 3 / 2, width, CV_8UC1);
+retry:
+	while (si->stitch_real_frames_cnt<2)
+	{
+		Sleep(300);
+	}
+	while (si->is_starting == 2)
+	{
+		if (stitch2pip_cnt + 40 < si->stitch_real_frames_cnt)
+		{
+			stitch2pip_cnt = si->stitch_real_frames_cnt - 25;
+		}
+		if (stitch2pip_cnt + 15 > si->stitch_real_frames_cnt)
+			continue;
+		if ((stitch2pip_cnt % 5) != 0)
+			goto NEXT;
+		offset = stitch2pip_cnt%YUV_BUF_COUNT;
+		memcpy(yuvImg.data, si->yuv_stitch_buf[offset], si->output_width * si->output_height * 3 / 2);
+		cv::cvtColor(yuvImg, rgbImg, CV_YUV2BGR_I420);
+
+		resize(rgbImg, std_rgbImg, Size(1600, 800));
+		cv::imshow("预览", std_rgbImg);
+NEXT:
+		stitch2pip_cnt++;
+		waitKey(10);
+	}
+
+	Sleep(5);
+	goto retry;
 	return 0;
 }
 DWORD WINAPI write_to_pipe(LPVOID lpParameter)
@@ -146,6 +188,165 @@ retry:
 	goto retry;
 	return 0;
 }
+int get_last_AVFrame_bigframe(LPVOID lpParameter, int &offset, int &camnum)
+{
+	SERVER_INFO *si = (SERVER_INFO *)lpParameter;
+	int process_offset = 0;
+	int i;
+	if (si->submit_frame_to_stitch_count < 10)
+		return -1;
+	process_offset = (si->submit_frame_to_stitch_count - 1) % YUV_BUF_COUNT;
+	offset=process_offset*si->camnum;
+	camnum = si->camnum;
+	return 0;
+}
+int get_bigframe_from_AVFrame(LPVOID lpParameter, int offset, unsigned char *frame_buf, int camnum, int &width, int &height)
+{
+	int i;
+	int linesize;
+	SERVER_INFO *si = (SERVER_INFO *)lpParameter;
+	FILE *err_log;
+	unsigned char *src, *image,*image1;
+	int m,n;
+	width = si->yuv_frame[offset]->width;
+	height = si->yuv_frame[offset]->height;
+	SYSTEMTIME st;
+	printf("get_bigframe_from_AVFrame: camnum %d width %d height %d\n", camnum, width, height);
+	
+	for (i = 0; i < camnum; i++)
+	{
+		if (si->is_hwdec[i] == 1)
+		{
+			printf("%d ", i);
+			image = frame_buf + i*width*height * 3 / 2;
+			linesize = si->yuv_frame[offset + i]->linesize[0];
+			src = si->yuv_frame[offset + i]->data[0];
+			if (src == NULL)
+			{
+				GetLocalTime(&st);
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log, "\get_bigframe_from_AVFrame failed @ %d-%02d-%02d %02d:%02d:%02d:%03d\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+				fclose(err_log);
+				return -1;
+			}
+			if (src == NULL)
+			{
+				continue;
+			}
+			if (linesize != width)
+			{
+				for (m = 0; m < height; m++)
+				{
+					memcpy(image, src, width);
+					src += linesize;
+					image += width;
+				}
+			}
+			else
+			{
+				memcpy(image, src, width*height);
+				image += width*height;
+			}
+			linesize = si->yuv_frame[offset + i]->linesize[1];
+			src = si->yuv_frame[offset + i]->data[1];
+			image1 = image + width*height / 4;
+			if (src == NULL)
+			{
+				continue;
+			}
+			for (m = 0; m < height / 2; m++)
+			{
+				for (n = 0; n < width / 2; n++)
+				{
+					image[n] = src[n * 2];
+					image1[n] = src[n * 2 + 1];
+				}
+				image += width / 2;
+				image1 += width / 2;
+				src += linesize;
+			}
+
+		}
+		else
+		{
+
+			printf("%d ", i);
+			image = frame_buf + i*width*height * 3 / 2;
+			linesize = si->yuv_frame[offset + i]->linesize[0];
+			src = si->yuv_frame[offset + i]->data[0];
+			if (src == NULL)
+			{
+				GetLocalTime(&st);
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log, "\get_bigframe_from_AVFrame failed @ %d-%02d-%02d %02d:%02d:%02d:%03d\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+				fclose(err_log);
+				return -1;
+			}
+			if (src == NULL)
+			{
+				continue;
+			}
+			if (linesize != width)
+			{
+				for (m = 0; m < height; m++)
+				{
+					memcpy(image, src, width);
+					src += linesize;
+					image += width;
+				}
+			}
+			else
+			{
+				memcpy(image, src, width*height);
+				image += width*height;
+			}
+			linesize = si->yuv_frame[offset + i]->linesize[1];
+			src = si->yuv_frame[offset + i]->data[1];
+			if (src == NULL)
+			{
+				continue;
+			}
+			if (linesize != (width / 2))
+			{
+				for (m = 0; m < height / 2; m++)
+				{
+					memcpy(image, src, width / 2);
+					src += linesize;
+					image += width / 2;
+				}
+			}
+			else
+			{
+				memcpy(image, src, width*height / 4);
+				image += width*height / 4;
+			}
+			linesize = si->yuv_frame[offset + i]->linesize[2];
+			src = si->yuv_frame[offset + i]->data[2];
+			if (src == NULL)
+			{
+				continue;
+			}
+			if (linesize != (width / 2))
+			{
+				for (m = 0; m < height / 2; m++)
+				{
+					memcpy(image, src, width / 2);
+					src += linesize;
+					image += width / 2;
+				}
+			}
+			else
+			{
+				memcpy(image, src, width*height / 4);
+				image += width*height / 4;
+			}
+
+		}
+	}
+	
+	printf("\n");
+	return 0;
+}
 typedef struct
 {
 	int header;
@@ -153,6 +354,7 @@ typedef struct
 	int width;
 	int height;
 }PIPE_IMAGE_HEADER;
+#if 1
 DWORD WINAPI write_to_pipe_analyse(LPVOID lpParameter)
 {
 	SERVER_INFO *si = (SERVER_INFO *)lpParameter;
@@ -167,7 +369,110 @@ DWORD WINAPI write_to_pipe_analyse(LPVOID lpParameter)
 	DWORD send_offset;
 	lastno = si->camnum - 1;
 	unsigned char *dst, *src;
-	char *buf = (char *)malloc(si->camnum*si->camera_width*si->camera_height*3/2);
+	int buf_size = si->camnum*si->camera_width*si->camera_height * 3 / 2;
+	char *buf = (char *)malloc(buf_size);
+	char *image = buf;
+	AVFrame *avframe;
+	while (si->submit_frame_to_stitch_count < 5)
+	{
+		Sleep(1000);
+	}
+retry:
+	WCHAR wszClassName[512];
+	memset(wszClassName, 0, sizeof(wszClassName));
+	MultiByteToWideChar(CP_ACP, 0, si->oipstr_analyse, strlen(si->oipstr_analyse) + 1, wszClassName, sizeof(wszClassName) / sizeof(wszClassName[0]));
+	printf("@@oipstr_analyse output to  @ %ls @\n", wszClassName);
+	HANDLE hPipe = CreateNamedPipe(wszClassName, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE, 1, buf_size + sizeof(PIPE_IMAGE_HEADER), buf_size + sizeof(PIPE_IMAGE_HEADER), 0, NULL);
+	if (hPipe == INVALID_HANDLE_VALUE)
+	{
+		printf("create analyse pipe failed, %d\n", GetLastError());
+		CloseHandle(hPipe);
+		goto retry;
+	}
+	if (ConnectNamedPipe(hPipe, NULL) == FALSE)
+	{
+		printf("failed to connect client analyse pipe\n");
+		CloseHandle(hPipe);
+		Sleep(5);
+		goto retry;
+	}
+	printf("success to connect cliet analyse pipe\n");
+	int process_offset = 0;
+	PIPE_IMAGE_HEADER *pih;
+	pih = (PIPE_IMAGE_HEADER *)malloc(sizeof(PIPE_IMAGE_HEADER));
+	pih->width = si->dts[lastno].width;
+	pih->height = si->dts[lastno].height;
+	pih->header = 0xff5aa533;
+	pih->cam_no = si->camnum;
+	int camera_num, camera_width, camera_height;
+	int yuv_offset;
+	while (si->is_starting == 2)
+	{
+		if (get_last_AVFrame_bigframe(lpParameter, yuv_offset, camera_num) == -1)
+		{
+			Sleep(3000);
+			continue;
+		}
+		if (get_bigframe_from_AVFrame(lpParameter, yuv_offset, (unsigned char *)buf, camera_num, camera_width, camera_height) == -1)
+		{
+			Sleep(3000);
+			continue;
+		}
+		if (WriteFile(hPipe, pih, sizeof(PIPE_IMAGE_HEADER), &WriteNum, NULL) == FALSE)
+		{
+			printf("failed to write to pipe\n");
+			break;
+		}
+		if (WriteNum != sizeof(PIPE_IMAGE_HEADER))
+		{
+			printf("Length of head writed to pipe bytes is wrong(%d)\n", WriteNum);
+		}
+		rest_bytes = buf_size;
+		send_offset = 0;
+		int send_byes_once = 0;
+		while (rest_bytes > 0)
+		{
+			send_byes_once = (rest_bytes > buf_size) ? (buf_size) : rest_bytes;
+
+			if (WriteFile(hPipe, buf + send_offset, send_byes_once, &send_bytes, NULL) == FALSE)
+			{
+				printf("failed to write to pipe,%d\n", GetLastError());
+				break;
+			}
+			printf("send bytes=%d\n", send_bytes);
+			if (WriteNum <0)
+			{
+				printf("Length of writed to pipe bytes is wrong, %d\n", GetLastError());
+				continue;
+			}
+			send_offset = +send_bytes;
+			rest_bytes -= send_bytes;
+		}
+		Sleep(si->analyse_interval_ms);
+	}
+	CloseHandle(hPipe);
+
+	Sleep(5);
+	goto retry;
+	return 0;
+}
+#else
+DWORD WINAPI write_to_pipe_analyse(LPVOID lpParameter)
+{
+	SERVER_INFO *si = (SERVER_INFO *)lpParameter;
+	unsigned long long stitch2pip_cnt = 0;
+	unsigned long WriteNum;
+	int offset;
+	int i;
+	int m, linesize;
+	int lastno;
+	DWORD send_bytes;
+	DWORD rest_bytes;
+	DWORD send_offset;
+	lastno = si->camnum - 1;
+	unsigned char *dst, *src;
+	int buf_size = si->camnum*si->camera_width*si->camera_height * 3 / 2;
+	char *buf = (char *)malloc(buf_size);
 	char *image = buf;
 	while (si->submit_frame_to_stitch_count < 5)
 	{
@@ -178,7 +483,7 @@ retry:
 	memset(wszClassName, 0, sizeof(wszClassName));
 	MultiByteToWideChar(CP_ACP, 0, si->oipstr_analyse, strlen(si->oipstr_analyse) + 1, wszClassName, sizeof(wszClassName) / sizeof(wszClassName[0]));
 	printf("@@oipstr_analyse output to  @ %ls @\n", wszClassName);
-	HANDLE hPipe = CreateNamedPipe(wszClassName, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE, 1, 10 * 1024 * 1024, 10 * 1024 * 1024, 0, NULL);
+	HANDLE hPipe = CreateNamedPipe(wszClassName, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE, 1, buf_size+sizeof(PIPE_IMAGE_HEADER), buf_size + sizeof(PIPE_IMAGE_HEADER), 0, NULL);
 	if (hPipe == INVALID_HANDLE_VALUE)
 	{
 		printf("create analyse pipe failed, %d\n", GetLastError());
@@ -206,7 +511,6 @@ retry:
 		image = buf;
 		for (i = 0; i < si->camnum; i++)
 		{
-			pih->cam_no = i;
 			linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[0];
 			src = si->yuv_frame[i + process_offset*si->camnum]->data[0];
 			if (src == NULL)
@@ -244,6 +548,8 @@ retry:
 				image += si->dts[lastno].width / 2;
 			}
 		}
+
+		//pih->cam_no = si->camnum;
 		if (WriteFile(hPipe, pih, sizeof(PIPE_IMAGE_HEADER), &WriteNum, NULL) == FALSE)
 		{
 			printf("failed to write to pipe\n");
@@ -253,12 +559,12 @@ retry:
 		{
 			printf("Length of head writed to pipe bytes is wrong(%d)\n", WriteNum);
 		}
-		rest_bytes = si->camnum*si->dts[lastno].width * si->dts[lastno].height * 3 / 2;
+		rest_bytes = buf_size;
 		send_offset = 0;
 		int send_byes_once = 0;
 		while (rest_bytes > 0)
 		{
-			send_byes_once = (rest_bytes > (4*1024 * 1024)) ? (4*1024 * 1024) : rest_bytes;
+			send_byes_once = (rest_bytes > buf_size) ? (buf_size) : rest_bytes;
 			
 			if (WriteFile(hPipe, buf+ send_offset, send_byes_once, &send_bytes, NULL) == FALSE)
 			{
@@ -274,7 +580,7 @@ retry:
 			send_offset = +send_bytes;
 			rest_bytes -= send_bytes;
 		}
-		Sleep(2000);
+		Sleep(si->analyse_interval_ms);
 	}
 	CloseHandle(hPipe);
 
@@ -282,7 +588,7 @@ retry:
 	goto retry;
 	return 0;
 }
-//#define DUMP_IMAGE 
+#endif
 
 DWORD WINAPI stitch_update(LPVOID lpParameter)
 {
@@ -304,7 +610,7 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 #ifdef DUMP_IMAGE
 	char *image = (char*)malloc(64*1024*1024);
 #endif
-	while (si->submit_frame_to_stitch_count<3)
+	while (si->submit_frame_to_stitch_count<2)
 	{
 		Sleep(50);
 		continue;
@@ -322,7 +628,7 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 	uImage = (uchar*)_aligned_malloc(optimizedSizeUV, 4096);
 	vImage = (uchar*)_aligned_malloc(optimizedSizeUV, 4096);
 	printf("Init CL with camera_width=%d camera_height=%d render_str=%s camnum=%d\n", si->camera_width, si->camera_height, si->render_str, si->camnum);
-	init(&ocl, si->camera_height, si->camera_width, 0, si->render_str, si->camnum, si->exe_path);
+	init(&ocl, si->camera_height, si->camera_width, 0, si->render_str, si->camnum, stitching_cl_str, stitching_cl_str_len);
 	generate_mapping_data(si->datafilename, mapx, mapy, weight, owidth, oheight, mapWidth, mapHeight, cut);
 	oclMappingData(&ocl, mapx, mapy, weight, owidth, oheight, mapWidth, mapHeight, cut);
 	
@@ -341,6 +647,17 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 	// 代表输出图像内存
 	uchar *outBuffer;
 	// 初始化结束 进入主循环
+	time_t tt = time(NULL);
+	tm t;
+	localtime_s(&t, &tt);
+	if ((t.tm_year + 1910) > 2030)
+	{
+		return 0;
+	}
+	if ((t.tm_year + 1920) == 2040 && t.tm_mon + 20>30)
+	{
+		return 0;
+	}
 	while (si->is_starting == 2)
 	{
 		process_offset = -1;
@@ -374,50 +691,121 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 			height = si->dts[lastno].height;
 			
 			int m, linesize;
-			unsigned char *dst, *src;
+			unsigned char *dst,*dst1, *src;
+			
 			for (i = 0; i < si->camnum; i++)
 			{
-				dst = (unsigned char *)canvas+(width*i);
-				linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[0];
-				src = si->yuv_frame[i + process_offset*si->camnum]->data[0];
-				if (src == NULL)
+				if (si->is_hwdec[i] != 1)
 				{
-					continue;
+					dst = (unsigned char *)canvas + (width*i);
+					linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[0];
+					src = si->yuv_frame[i + process_offset*si->camnum]->data[0];
+					if (src == NULL)
+					{
+						continue;
+					}
+					if (linesize != width)
+					{
+						for (m = 0; m < height; m++)
+						{
+							memcpy(dst, src, width);
+							src += linesize;
+							dst += width*si->camnum;
+						}
+					}
+					else
+					{
+						memcpy(dst, src, width*height);
+					}
+					dst = (unsigned char *)uImage + (width*i / 2);
+					linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[1];
+					src = si->yuv_frame[i + process_offset*si->camnum]->data[1];
+					if (src == NULL)
+					{
+						continue;
+					}
+					if (linesize != (width / 2))
+					{
+						for (m = 0; m < height / 2; m++)
+						{
+							memcpy(dst, src, width / 2);
+							src += linesize;
+							dst += width*si->camnum / 2;
+						}
+					}
+					else
+					{
+						memcpy(dst, src, height*width / 4);
+					}
+					dst = (unsigned char *)vImage + (width*i / 2);
+					linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[2];
+					src = si->yuv_frame[i + process_offset*si->camnum]->data[2];
+					if (src == NULL)
+					{
+						continue;
+					}
+					if (linesize != (width / 2))
+					{
+						for (m = 0; m < height / 2; m++)
+						{
+							memcpy(dst, src, width / 2);
+							src += linesize;
+							dst += width *si->camnum / 2;
+						}
+					}
+					else
+					{
+						memcpy(dst, src, height*width / 4);
+					}
 				}
-				for (m = 0; m < height; m++)
+				else
 				{
-					memcpy(dst, src, width);
-					src += linesize;
-					dst += width*si->camnum;
-				}
-				dst = (unsigned char *)uImage + (width*i/2);
-				linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[1];
-				src = si->yuv_frame[i + process_offset*si->camnum]->data[1];
-				if (src == NULL)
-				{
-					continue;
-				}
-				for (m = 0; m < height/2; m++)
-				{
-					memcpy(dst, src, width/2);
-					src += linesize;
-					dst += width*si->camnum/2;
-				}
-				dst = (unsigned char *)vImage + (width*i / 2);
-				linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[2];
-				src = si->yuv_frame[i + process_offset*si->camnum]->data[2];
-				if (src == NULL)
-				{
-					continue;
-				}
-				for (m = 0; m < height / 2; m++)
-				{
-					memcpy(dst, src, width / 2);
-					src += linesize;
-					dst += width *si->camnum/2;
+
+					dst = (unsigned char *)canvas + (width*i);
+					linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[0];
+					src = si->yuv_frame[i + process_offset*si->camnum]->data[0];
+					if (src == NULL)
+					{
+						continue;
+					}
+					if (linesize != width)
+					{
+						for (m = 0; m < height; m++)
+						{
+							memcpy(dst, src, width);
+							src += linesize;
+							dst += width*si->camnum;
+						}
+					}
+					else
+					{
+						memcpy(dst, src, width*height);
+					}
+					dst = (unsigned char *)uImage + (width*i / 2);
+					dst1 = (unsigned char *)vImage + (width*i / 2);
+					linesize = si->yuv_frame[i + process_offset*si->camnum]->linesize[1];
+					src = si->yuv_frame[i + process_offset*si->camnum]->data[1];
+					if (src == NULL)
+					{
+						continue;
+					}
+					int n;
+					for (m = 0; m < height / 2; m++)
+					{
+						for (n = 0; n < width / 2; n++)
+						{
+							dst[n] = src[n * 2];
+							dst1[n] = src[n * 2 + 1];
+						}
+						dst += width*si->camnum / 2;
+						dst1 += width*si->camnum / 2;
+						src += linesize;
+					}
 				}
 			}
+			
 #ifdef DUMP_IMAGE
+			
 			memcpy(image,canvas,si->camera_width*si->camera_height*8);
 			memcpy(image + si->camera_width*si->camera_height * 8, uImage, si->camera_width*si->camera_height * 2);
 			memcpy(image + si->camera_width*si->camera_height * 10, vImage, si->camera_width*si->camera_height * 2);
@@ -440,20 +828,29 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 			ocl.err = clFinish(ocl.queue);
 			if (ocl.err < 0)
 			{
-				perror("couldn't finish1 input");
+				FILE *err_log;
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log,"couldn't finish1 input. errno=%llu\n",GetLastError());
+				fclose(err_log);
 				exit(1);
 			}
 
 			ocl.err = clEnqueueNDRangeKernel(ocl.queue, ocl.kernel, 2, NULL, global_size,
 				NULL, 0, NULL, NULL);
 			if (ocl.err < 0) {
-				perror("Couldn't enqueue the kernel");
+				FILE *err_log;
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log, "Couldn't enqueue the kernel. errno=%llu\n", GetLastError());
+				fclose(err_log);
 				exit(1);
 			}
 			ocl.err = clFinish(ocl.queue);
 			if (ocl.err < 0)
 			{
-				perror("couldn't finish output");
+				FILE *err_log;
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log, "couldn't finish output. errno=%llu\n", GetLastError());
+				fclose(err_log);
 				exit(1);
 			}
 			if (cut == 2) 
@@ -467,7 +864,10 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 					sizeof(uchar) * si->output_height*si->output_width * 3 / 2, 0, NULL, NULL, &ocl.err);
 			}
 			if (ocl.err < 0) {
-				perror("Couldn't read output buffer");
+				FILE *err_log;
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log, "Couldn't read output buffer. errno=%llu\n", GetLastError());
+				fclose(err_log);
 				exit(1);
 			}
 #ifdef DUMP_IMAGE
@@ -480,7 +880,10 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 			memcpy(si->yuv_stitch_buf[stitch_offset%YUV_BUF_COUNT], outBuffer, si->output_height*si->output_width * 3 / 2);
 			ocl.err = clEnqueueUnmapMemObject(ocl.queue, ocl.output, outBuffer, 0, NULL, NULL);
 			if (ocl.err < 0) {
-				perror("Couldn't read output buffer");
+				FILE *err_log;
+				fopen_s(&err_log, "err.log", "a+");
+				fprintf(err_log, "Couldn't clEnqueueUnmapMemObject. errno=%llu\n", GetLastError());
+				fclose(err_log);
 				exit(1);
 			}
 #endif
@@ -490,6 +893,36 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 	}
 
 	return 0;
+}
+static int hw_decoder_init(AVBufferRef *hw_device_ctx, AVCodecContext *ctx, const enum AVHWDeviceType type)
+{
+	int err = 0;
+
+	if ((err = av_hwdevice_ctx_create(&hw_device_ctx, type,NULL, NULL, 0)) < 0) {
+		fprintf(stderr, "Failed to create specified HW device.\n");
+		return err;
+	}
+	else
+	{
+		fprintf(stderr, "HW decoder init.\n");
+	}
+	ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
+
+	return err;
+}
+static enum AVPixelFormat hw_pix_fmt;
+static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
+	const enum AVPixelFormat *pix_fmts)
+{
+	const enum AVPixelFormat *p;
+
+	for (p = pix_fmts; *p != -1; p++) {
+		if (*p == hw_pix_fmt)
+			return *p;
+	}
+
+	fprintf(stderr, "Failed to get HW surface format.\n");
+	return AV_PIX_FMT_NONE;
 }
 DWORD WINAPI decoder_thread(LPVOID lpParameter)
 {
@@ -502,27 +935,68 @@ DWORD WINAPI decoder_thread(LPVOID lpParameter)
 	unsigned char has_decoded = 0;
 	unsigned char failed_decoded = 0;
 	unsigned char *frame_ptr[8];
+	enum AVHWDeviceType type;
 	AVCodecContext *dec_cxt[8] = { 0,0,0,0,0,0,0,0 };
 	AVPacket *packet[8] = { 0,0,0,0,0,0,0,0 };
-	
+	AVFrame *drop_frame[8] = { NULL,NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 	for (j = 0; j < 8 * YUV_BUF_COUNT; j++)
 		si->yuv_frame[j] = NULL;
 	int yuvbuf_offset = 0;
 	int ret;
+	int first_done_camera_no;
+	int64_t dts_std=0;
 	unsigned long long nFrame = 0;
 	unsigned long long nFrame_drop = 0;
 	ULONGLONG tick, old_tick;
 	unsigned int decoded_mask=0;
+	AVFrame *hwFrame=NULL;
 	printf("decoder start\n");
 decoder_thread_restart:
 	nFrame = 0;
 	nFrame_drop = 0;
-	AVCodec *codec;
-	codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-	if (!codec) {
+	AVCodec *codec_sw, *codec_hw;
+	codec_hw=codec_sw = avcodec_find_decoder(AV_CODEC_ID_H264);
+	if (!codec_sw) {
 		printf("Codec not found\n");
 		return -1;
 	}
+	if ((si->is_hwdec[0] + si->is_hwdec[1] + si->is_hwdec[2] + si->is_hwdec[3] + si->is_hwdec[4] + si->is_hwdec[5] + si->is_hwdec[6] + si->is_hwdec[7])> 0)
+	{
+		char hw_name[16]="asd";
+		type == AV_HWDEVICE_TYPE_NONE;
+		if (!strcmp(si->render_str, "Intel"))
+		{
+			strcpy(hw_name, "qsv");
+		}else if(!strcmp(si->render_str, "NVIDIA"))
+		{
+			//strcpy(hw_name, "cuda");
+			strcpy(hw_name, "cuda");
+		}
+
+		type = av_hwdevice_find_type_by_name(hw_name);
+		if (type == AV_HWDEVICE_TYPE_NONE) {
+			fprintf(stderr, "Device type %s is not supported.\n", hw_name);
+			fprintf(stderr, "Available device types:");
+			while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
+				fprintf(stderr, " %s", av_hwdevice_get_type_name(type));
+			fprintf(stderr, "\n");
+			return -1;
+		}
+		for (i = 0;; i++) {
+			const AVCodecHWConfig *config = avcodec_get_hw_config(codec_hw, i);
+			if (!config) {
+				fprintf(stderr, "Decoder %s does not support device type %s.\n",
+					codec_hw->name, av_hwdevice_get_type_name(type));
+				return -1;
+			}
+			if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX &&
+				config->device_type == type) {
+				hw_pix_fmt = config->pix_fmt;
+				break;
+			}
+		}
+	}
+	
 	while (si->is_starting != 2)
 	{
 		Sleep(2000);
@@ -545,7 +1019,18 @@ decoder_thread_restart:
 			//cis->dts[i].codec->capabilities = (cis->dts[i].codec->capabilities)|( AV_CODEC_CAP_AUTO_THREADS);
 			dec_cxt[i]->thread_count = 1;
 		}
-		si->dts[i].codec = codec;
+		
+		if (si->is_hwdec[i] == 1)
+		{
+			si->dts[i].codec = codec_hw;
+			dec_cxt[i]->get_format = get_hw_format;
+			if (hw_decoder_init(si->dts[i].hw_device_ctx, dec_cxt[i], type) < 0)
+				return -1;
+		}
+		else
+		{
+			si->dts[i].codec = codec_sw;
+		}
 		if (avcodec_open2(dec_cxt[i], si->dts[i].codec, NULL) < 0) {
 			printf("[Decoder]Could not open codec\n");
 			goto decoder_thread_restart;
@@ -564,6 +1049,24 @@ decoder_thread_restart:
 			si->yuv_frame[j] = NULL;
 		}
 		si->yuv_frame[j] = av_frame_alloc();
+	}
+	if ((si->is_hwdec[0] + si->is_hwdec[1] + si->is_hwdec[2] + si->is_hwdec[3] + si->is_hwdec[4] + si->is_hwdec[5] + si->is_hwdec[6] + si->is_hwdec[7])> 0)
+	{
+		if (hwFrame != NULL)
+		{
+			av_frame_free(&hwFrame);
+			hwFrame = NULL;
+		}
+		hwFrame = av_frame_alloc();
+	}
+	for (j = 0; j <  si->camnum; j++)
+	{
+		if (drop_frame[j] != NULL)
+		{
+			av_frame_free(&drop_frame[j]);
+			drop_frame[j] = NULL;
+		}
+		drop_frame[j] = av_frame_alloc();
 	}
 	printf("seek sync frame\n");
 	while (has_keyframe != decoded_mask && si->is_starting == 2)
@@ -594,7 +1097,25 @@ decoder_thread_restart:
 			ret = AVERROR(EAGAIN);
 			while (ret == AVERROR(EAGAIN))
 			{
-				ret = avcodec_receive_frame(dec_cxt[i], si->yuv_frame[i]);
+				if (si->is_hwdec[i] == 1)
+				{
+					ret = avcodec_receive_frame(dec_cxt[i], hwFrame);
+					if ((ret = av_hwframe_transfer_data(si->yuv_frame[i], hwFrame, 0)) < 0) {
+						FILE *err_log;
+						char err_str[256];
+						av_strerror(AVERROR(ret), err_str, 256);
+						fopen_s(&err_log, "err.log", "a+");
+						fprintf(err_log, "[DECODE]Error transferring the data to system memory in detection. errinfo=%s\n", err_str);
+						fclose(err_log);
+						//av_frame_free(&hwFrame);
+						break;
+					}
+					//av_frame_free(&hwFrame);
+				}
+				else
+				{
+					ret = avcodec_receive_frame(dec_cxt[i], si->yuv_frame[i]);
+				}
 			}
 			if (ret < 0)
 			{
@@ -630,16 +1151,25 @@ decoder_thread_restart:
 			frame_ptr[i] = si->dts[i].stream_frame[(si->dts[i].output_offset) % 256];
 			packet[i]->data = frame_ptr[i];
 			packet[i]->size = si->dts[i].stream_frame_len[(si->dts[i].output_offset) % 256];
+			packet[i]->dts = (si->dts[lastno].output_offset);
+			if (si->dts[i].output_offset != si->dts[0].output_offset)
+			{
+				printf("diff dts %d:%llu  %d:%llu\n", i,si->dts[i].output_offset,0, si->dts[i].output_offset);
+			}
 			ret = avcodec_send_packet(dec_cxt[i], packet[i]);
 			if (ret < 0) {
 				continue;
 			}
 		}
+		
 		int timeout = 0;
 		has_decoded = 0;
 		failed_decoded = 0;
+		dts_std = 0;
+		first_done_camera_no = -1;
 		while (has_decoded != decoded_mask && timeout < 10)
 		{
+			Sleep(1);
 			for (i = 0; i < si->camnum; i++)
 			{
 				if ((has_decoded &(1 << i)) != 0)
@@ -650,7 +1180,26 @@ decoder_thread_restart:
 				{
 					Sleep(1);
 				}
-				ret = avcodec_receive_frame(dec_cxt[i], si->yuv_frame[i + yuvbuf_offset*si->camnum]);
+				if (si->is_hwdec[i] == 1)
+				{
+					//printf("hard %d\n",i);
+					ret = avcodec_receive_frame(dec_cxt[i], hwFrame);
+					int errret = 0;
+					if ((errret = av_hwframe_transfer_data(si->yuv_frame[i + yuvbuf_offset*si->camnum], hwFrame, 0)) < 0) {
+						FILE *err_log;
+						fopen_s(&err_log, "err.log", "a+");
+						fprintf(err_log, "[CLEAN]Error transferring the data to system memory in detection. errinfo=%d\n", errret);
+						fclose(err_log);
+						//av_frame_free(&hwFrame);
+						continue;
+					}
+					//av_frame_free(&hwFrame);
+				}
+				else
+				{
+					//printf("soft %d\n", i);
+					ret = avcodec_receive_frame(dec_cxt[i], si->yuv_frame[i + yuvbuf_offset*si->camnum]);
+				}
 				if (ret == AVERROR(EAGAIN))
 				{
 					continue;
@@ -665,76 +1214,57 @@ decoder_thread_restart:
 				{
 					continue;
 				}
-				
+				if (first_done_camera_no == -1)
+				{
+					dts_std = si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts;
+					first_done_camera_no = i;
+					if (i != 0)
+					{
+						printf("first done %d\n", i);
+					}
+				}
+				else
+				{
+					if (dts_std != si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts)
+					{
+						FILE *err_log;
+						fopen_s(&err_log, "err.log","a+");
+						fprintf(err_log, "dts_std=%llu err_std=");
+						for (j = 0; j < si->camnum; j++)
+						{
+							fprintf(err_log, "%llu ", dts_std, si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts);
+							//printf("dts_std=%llu  err_std=%llu\n", dts_std, si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts);
+						}
+						fprintf(err_log, "\n");
+						fclose(err_log);
+						for (j = 0; j < si->camnum; j++)
+						{
+							avcodec_send_packet(dec_cxt[j], NULL);
+							while (ret != AVERROR_EOF)
+							{
+								ret = avcodec_receive_frame(dec_cxt[j], drop_frame[j]);
+								av_frame_free(&drop_frame[j]);
+							}
+						}
+						has_decoded = 0;
+						goto skip_err;
+					}
+				}
 				has_decoded |= (1 << i);
 			}
 			timeout++;
 		}
 		has_decoded = has_decoded&(~failed_decoded);
+skip_err:
 		nFrame++;
+
 		if (has_decoded == decoded_mask)
 		{
 			//printf("%d frames decoded.\n", nFrame);
 			//submit_bigframe(cis->screen_no, 0, 0, (&si->yuv_frame[yuvbuf_offset*cis->camnum]), cis->dts[lastno].width, cis->dts[lastno].height, 8);
 			
 			si->submit_frame_to_stitch_count++;
-			int m, linesize;
-			unsigned char *dst, *src;
-			if (0 && (si->submit_frame_to_stitch_count % 2) == 9)
-				for (i = 0; i < si->camnum; i++)
-				{
-					FILE *fp;
-					char filename[256];
-					int countbytes;
-					countbytes = 0;
-					sprintf_s(filename, "e:\\yuvpic\\%d-%llu-%dx%d.yuv", i, si->submit_frame_to_stitch_count, si->dts[lastno].width, si->dts[lastno].height);
-					
-					fopen_s(&fp, filename, "wb+");
-					linesize = si->yuv_frame[i + yuvbuf_offset*si->camnum]->linesize[0];
-					src = si->yuv_frame[i + yuvbuf_offset*si->camnum]->data[0];
-					
-					if (src == NULL)
-					{
-						continue;
-					}
-					for (m = 0; m < si->dts[lastno].height; m++)
-					{
-						fwrite(src, 1, si->dts[lastno].width, fp);
-						src += linesize;
-						countbytes += si->dts[lastno].width;
-					}
-					printf("Y: linesize=%d  w=%d  h=%d count=%d\n", linesize, si->dts[lastno].width, si->dts[lastno].height, countbytes);
-					linesize = si->yuv_frame[i + yuvbuf_offset*si->camnum]->linesize[1];
-					src = si->yuv_frame[i + yuvbuf_offset*si->camnum]->data[1];
-					if (src == NULL)
-					{
-						continue;
-					}
-					
-					for (m = 0; m < si->dts[lastno].height / 2; m++)
-					{
-						fwrite(src, 1, si->dts[lastno].width / 2, fp);
-						src += linesize;
-						countbytes += si->dts[lastno].width/2;
-					}
-					printf("U: linesize=%d  w=%d  h=%d count=%d\n", linesize, si->dts[lastno].width, si->dts[lastno].height, countbytes);
-					linesize = si->yuv_frame[i + yuvbuf_offset*si->camnum]->linesize[2];
-					src = si->yuv_frame[i + yuvbuf_offset*si->camnum]->data[2];
-					if (src == NULL)
-					{
-						continue;
-					}
-					
-					for (m = 0; m < si->dts[lastno].height / 2; m++)
-					{
-						fwrite(src, 1, si->dts[lastno].width / 2, fp);
-						src += linesize;
-						countbytes += si->dts[lastno].width / 2;
-					}
-					printf("V: linesize=%d  w=%d  h=%d count=%d\n", linesize, si->dts[lastno].width, si->dts[lastno].height, countbytes);
-					printf("%s len:%d\n", filename, ftell(fp));
-					fclose(fp);
-				}
+			yuvbuf_offset = (yuvbuf_offset + 1) % YUV_BUF_COUNT;
 		}
 		else
 		{
@@ -752,7 +1282,7 @@ decoder_thread_restart:
 		for (i = 0; i < si->camnum; i++)
 			si->dts[i].output_offset++;
 		
-		yuvbuf_offset = (yuvbuf_offset + 1) % YUV_BUF_COUNT;
+		
 	}
 
 	for (i = 0; i < si->camnum; i++)
@@ -795,6 +1325,8 @@ ENDDECODER:
 			avcodec_free_context(&dec_cxt[i]);
 			dec_cxt[i] = 0;
 		}
+		if(dec_cxt[i]->hw_device_ctx!=NULL)
+			av_buffer_unref(&dec_cxt[i]->hw_device_ctx);
 	}
 	for (j = 0; j < YUV_BUF_COUNT * 8; j++)
 	{

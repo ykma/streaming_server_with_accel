@@ -7,6 +7,7 @@ extern "C"
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 }
+#include "priv_proto.h"
 #include <winsock2.h>
 #include<Ws2tcpip.h>
 #include <Windows.h>
@@ -23,7 +24,7 @@ extern "C"
 #define CMD_STREAM_CONTROL_START 1
 #define CMD_STREAM_CONTROL_CLOSE 2
 
-#define YUV_BUF_COUNT 50
+#define YUV_BUF_COUNT 30
 typedef struct bigframe
 {
 	void *avframe[8];
@@ -60,7 +61,6 @@ typedef struct _STATUS_MACHINE_INFO
 typedef struct
 {
 	AVCodec *codec;
-	FRAME_BUF_INFO *frame_buf_info_ptr[DECODER_BUFFER_COUNT];
 	int tick, tick_old;
 	int nIndex;
 	int oneonone;
@@ -79,8 +79,14 @@ typedef struct
 	unsigned char *submit_frame[128];
 	int submit_frame_avail[256];
 	unsigned int *max_stamp;
-
+	AVBufferRef *hw_device_ctx;
 }DECODER_THREAD_S;
+typedef struct {
+	string path;
+	char *buf;
+	unsigned long long input_bytes;
+	unsigned long long output_bytes;
+}DUMP_STREAM_S;
 typedef struct _SERVER_INFO
 {
 	char local_filename[256];
@@ -125,15 +131,26 @@ typedef struct _SERVER_INFO
 	int stream_id;
 	int pipe_ok;
 	int stitch_thread_count;
+	int analyse_interval_ms;
+	int is_local_play;
+	int is_yuv_snap;
+	int is_preview;
+	int is_hwdec[8];
+	int is_dumpstream;
+	DUMP_STREAM_S *dss;
+	
 }SERVER_INFO;
 DWORD WINAPI file_recv_thread(LPVOID lpParameter);
 DWORD WINAPI networking_recv_thread(LPVOID lpParameter);
 DWORD WINAPI big_frame_receiver_machine(LPVOID lpParameter);
+DWORD WINAPI big_frame_receiver_machine_from_camera(LPVOID lpParameter);
 DWORD WINAPI decoder_thread(LPVOID lpParameter);
 DWORD WINAPI stitch_update(LPVOID lpParameter);
 DWORD WINAPI write_to_pipe_encode(LPVOID lpParameter);
 DWORD WINAPI write_to_pipe_analyse(LPVOID lpParameter);
+DWORD WINAPI preview_thread(LPVOID lpParameter);
 DWORD WINAPI encode_deamon(LPVOID lpParameter);
-
+DWORD WINAPI dump_stream_thread(LPVOID lpParameter);
+void get_snap(LPVOID lpParameter);
 int stream_control(SERVER_INFO *si, int cmd, void *param);
 #endif
