@@ -11,6 +11,7 @@ extern "C"
 #include <winsock2.h>
 #include<Ws2tcpip.h>
 #include <Windows.h>
+#include<atomic>
 #include "utils.h"
 #include "clFunction.h"
 #include"oclData.h"

@@ -804,17 +804,6 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 				}
 			}
 			
-#ifdef DUMP_IMAGE
-			
-			memcpy(image,canvas,si->camera_width*si->camera_height*8);
-			memcpy(image + si->camera_width*si->camera_height * 8, uImage, si->camera_width*si->camera_height * 2);
-			memcpy(image + si->camera_width*si->camera_height * 10, vImage, si->camera_width*si->camera_height * 2);
-			Mat resulti;
-			cvtColor(Mat(si->camera_height * 3 / 2, si->camera_width*8, CV_8UC1, (void*)image), resulti, CV_YUV420p2RGB);
-			namedWindow("resulti", WINDOW_NORMAL);
-			imshow("resulti", resulti);
-			waitKey(0);
-#endif
 #if 1
 			clEnqueueWriteImage(ocl.queue, ocl.yImage, CL_TRUE,
 				origin_input, region_input, 0 /* row-pitch */, 0 /* slice-pitch */, (void*)canvas, 0, NULL, NULL
@@ -870,13 +859,7 @@ DWORD WINAPI stitch_update(LPVOID lpParameter)
 				fclose(err_log);
 				exit(1);
 			}
-#ifdef DUMP_IMAGE
-			Mat result;
-			cvtColor(Mat(oheight * 3 / 2, owidth, CV_8UC1, (void*)outBuffer), result, CV_YUV420p2RGB);
-			namedWindow("result", WINDOW_NORMAL);
-			imshow("result", result);
-			waitKey(0);
-#endif
+
 			memcpy(si->yuv_stitch_buf[stitch_offset%YUV_BUF_COUNT], outBuffer, si->output_height*si->output_width * 3 / 2);
 			ocl.err = clEnqueueUnmapMemObject(ocl.queue, ocl.output, outBuffer, 0, NULL, NULL);
 			if (ocl.err < 0) {
@@ -924,11 +907,409 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
 	fprintf(stderr, "Failed to get HW surface format.\n");
 	return AV_PIX_FMT_NONE;
 }
+SERVER_INFO *get_server_info(LPVOID lpParameter)
+{
+	static SERVER_INFO *si;
+	if (lpParameter == NULL)
+	{
+		si= (SERVER_INFO *)lpParameter;
+	}
+	return si;
+}
+#if 1
+DWORD WINAPI decoder_thread(LPVOID lpParameter)
+{
+	uint64 node_no;
+	node_no = (uint64)lpParameter;
+	SERVER_INFO *si=get_server_info(NULL);
+	string path = si->datafilename;
+	int lastno= si->camnum-1;
+	int initd = 0;
+	int i, j;
+	unsigned char *frame_ptr;
+	enum AVHWDeviceType type;
+	AVCodecContext *dec_cxt = NULL;
+	AVPacket *packet = NULL;
+	AVFrame *drop_frame = NULL;
+	for (j = 0; j < 8 * YUV_BUF_COUNT; j+=8)
+		si->yuv_frame[j] = NULL;
+	int yuvbuf_offset = 0;
+	int ret;
+	int64_t dts_std=0;
+	unsigned long long nFrame = 0;
+	unsigned long long nFrame_drop = 0;
+	ULONGLONG tick, old_tick;
+	AVFrame *hwFrame=NULL;
+	printf("decoder start\n");
+decoder_thread_restart:
+	nFrame = 0;
+	nFrame_drop = 0;
+	AVCodec *codec;
+	codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+	if (!codec) {
+		printf("Codec not found\n");
+		return -1;
+	}
+	if (si->is_hwdec[node_no]== 1)
+	{
+		char hw_name[16]="asd";
+		type == AV_HWDEVICE_TYPE_NONE;
+		if (!strcmp(si->render_str, "Intel"))
+		{
+			strcpy(hw_name, "qsv");
+		}else if(!strcmp(si->render_str, "NVIDIA"))
+		{
+			//strcpy(hw_name, "cuda");
+			strcpy(hw_name, "cuda");
+		}
+
+		type = av_hwdevice_find_type_by_name(hw_name);
+		if (type == AV_HWDEVICE_TYPE_NONE) {
+			fprintf(stderr, "Device type %s is not supported.\n", hw_name);
+			fprintf(stderr, "Available device types:");
+			while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
+				fprintf(stderr, " %s", av_hwdevice_get_type_name(type));
+			fprintf(stderr, "\n");
+			return -1;
+		}
+		for (i = 0;; i++) {
+			const AVCodecHWConfig *config = avcodec_get_hw_config(codec, i);
+			if (!config) {
+				fprintf(stderr, "Decoder %s does not support device type %s.\n",
+					codec->name, av_hwdevice_get_type_name(type));
+				return -1;
+			}
+			if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX && config->device_type == type) {
+				hw_pix_fmt = config->pix_fmt;
+				break;
+			}
+		}
+	}
+	
+	while (si->is_starting != 2)
+	{
+		Sleep(2000);
+	}
+	lastno = si->camnum - 1;
+
+		dec_cxt = avcodec_alloc_context3(si->dts[i].codec);
+		if (!dec_cxt) {
+			goto decoder_thread_restart;
+		}
+		dec_cxt->thread_count = 1;
+		si->dts[i].codec = codec;
+		if (si->is_hwdec[i] == 1)
+		{
+			dec_cxt->get_format = get_hw_format;
+			if (hw_decoder_init(si->dts[i].hw_device_ctx, dec_cxt, type) < 0)
+				return -1;
+		}
+		if (avcodec_open2(dec_cxt, si->dts[i].codec, NULL) < 0) {
+			printf("[Decoder]Could not open codec\n");
+			goto decoder_thread_restart;
+		}
+		packet = av_packet_alloc();
+		if (!packet)
+			goto decoder_thread_restart;
+
+
+	for (j = 0; j < YUV_BUF_COUNT * 8; j+=8)
+	{
+		if (si->yuv_frame[j] != NULL)
+		{
+			av_frame_free(&si->yuv_frame[j]);
+			si->yuv_frame[j] = NULL;
+		}
+		si->yuv_frame[j] = av_frame_alloc();
+	}
+	if (si->is_hwdec[node_no]==1)
+	{
+		if (hwFrame != NULL)
+		{
+			av_frame_free(&hwFrame);
+			hwFrame = NULL;
+		}
+		hwFrame = av_frame_alloc();
+	}
+
+		if (drop_frame != NULL)
+		{
+			av_frame_free(&drop_frame);
+			drop_frame = NULL;
+		}
+		drop_frame = av_frame_alloc();
+	printf("seek sync frame\n");
+	int key_frame_detected = 0;
+	while (si->is_starting == 2)
+	{
+		if ((si->dts[node_no].input_offset - si->dts[node_no].output_offset) < 1)
+		{
+			Sleep(10);
+			continue;
+		}
+
+		frame_ptr = si->dts[node_no].stream_frame[(si->dts[node_no].output_offset) % 256];
+		if ((key_frame_detected&(1 << i)) == 0 && (frame_ptr[4] - 0x67) != 0)
+		{
+			si->dts[i].output_offset++;
+			continue;
+		}
+
+		packet->data = frame_ptr;
+		packet->size = si->dts[i].stream_frame_len[(si->dts[i].output_offset) % 256];
+		ret = avcodec_send_packet(dec_cxt, packet);
+		if (ret < 0)
+		{
+			si->dts[i].output_offset++;
+			continue;
+		}
+		ret = AVERROR(EAGAIN);
+		while (ret == AVERROR(EAGAIN))
+		{
+			if (si->is_hwdec[i] == 1)
+			{
+				ret = avcodec_receive_frame(dec_cxt, hwFrame);
+				if ((ret = av_hwframe_transfer_data(si->yuv_frame[i], hwFrame, 0)) < 0) {
+					FILE *err_log;
+					char err_str[256];
+					av_strerror(AVERROR(ret), err_str, 256);
+					fopen_s(&err_log, "err.log", "a+");
+					fprintf(err_log, "[DECODE]Error transferring the data to system memory in detection. errinfo=%s\n", err_str);
+					fclose(err_log);
+					//av_frame_free(&hwFrame);
+					break;
+				}
+				//av_frame_free(&hwFrame);
+			}
+			else
+			{
+				ret = avcodec_receive_frame(dec_cxt, si->yuv_frame[i]);
+			}
+
+			if (ret < 0)
+			{
+				si->dts[i].output_offset++;
+				continue;
+			}
+			if ((has_keyframe&(1 << i)) == 0)
+			{
+				si->dts[i].width = si->yuv_frame[i]->width;
+				si->dts[i].height = si->yuv_frame[i]->height;
+			}
+			si->dts[i].output_offset++;
+			has_keyframe |= (1 << i);
+		}
+	}
+	yuvbuf_offset = 0;
+	printf("raw video is %d x %d\n", si->dts[lastno].width, si->dts[lastno].height);
+
+	old_tick = tick = ::GetTickCount64();
+	printf("start to decode.\n");
+	si->camera_height = si->dts[lastno].height;
+	si->camera_width = si->dts[lastno].width;
+	while (si->is_starting == 2)
+	{
+		if ((si->dts[lastno].input_offset - si->dts[lastno].output_offset) < 1)
+		{
+			Sleep(5);
+			continue;
+		}
+
+		for (i = 0; i < si->camnum; i++)
+		{
+			frame_ptr = si->dts[i].stream_frame[(si->dts[i].output_offset) % 256];
+			packet->data = frame_ptr;
+			packet->size = si->dts[i].stream_frame_len[(si->dts[i].output_offset) % 256];
+			packet->dts = (si->dts[lastno].output_offset);
+			if (si->dts[i].output_offset != si->dts[0].output_offset)
+			{
+				printf("diff dts %d:%llu  %d:%llu\n", i,si->dts[i].output_offset,0, si->dts[i].output_offset);
+			}
+			ret = avcodec_send_packet(dec_cxt, packet);
+			if (ret < 0) {
+				continue;
+			}
+		}
+		
+		int timeout = 0;
+		dts_std = 0;
+		while (has_decoded != decoded_mask && timeout < 10)
+		{
+			Sleep(1);
+			for (i = 0; i < si->camnum; i++)
+			{
+				if ((has_decoded &(1 << i)) != 0)
+				{
+					continue;
+				}
+				if (ret == AVERROR(EAGAIN))
+				{
+					Sleep(1);
+				}
+				if (si->is_hwdec[i] == 1)
+				{
+					//printf("hard %d\n",i);
+					ret = avcodec_receive_frame(dec_cxt, hwFrame);
+					int errret = 0;
+					if ((errret = av_hwframe_transfer_data(si->yuv_frame[i + yuvbuf_offset*si->camnum], hwFrame, 0)) < 0) {
+						FILE *err_log;
+						fopen_s(&err_log, "err.log", "a+");
+						fprintf(err_log, "[CLEAN]Error transferring the data to system memory in detection. errinfo=%d\n", errret);
+						fclose(err_log);
+						//av_frame_free(&hwFrame);
+						continue;
+					}
+					//av_frame_free(&hwFrame);
+				}
+				else
+				{
+					//printf("soft %d\n", i);
+					ret = avcodec_receive_frame(dec_cxt, si->yuv_frame[i + yuvbuf_offset*si->camnum]);
+				}
+				if (ret == AVERROR(EAGAIN))
+				{
+					continue;
+				}
+				if (ret == AVERROR_EOF)
+				{
+					has_decoded |= (1 << i);
+					failed_decoded |= (1 << i);
+					continue;
+				}
+				else if (ret < 0)
+				{
+					continue;
+				}
+				if (first_done_camera_no == -1)
+				{
+					dts_std = si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts;
+					first_done_camera_no = i;
+					if (i != 0)
+					{
+						printf("first done %d\n", i);
+					}
+				}
+				else
+				{
+					if (dts_std != si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts)
+					{
+						FILE *err_log;
+						fopen_s(&err_log, "err.log","a+");
+						fprintf(err_log, "dts_std=%llu err_std=");
+						for (j = 0; j < si->camnum; j++)
+						{
+							fprintf(err_log, "%llu ", dts_std, si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts);
+							//printf("dts_std=%llu  err_std=%llu\n", dts_std, si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts);
+						}
+						fprintf(err_log, "\n");
+						fclose(err_log);
+						for (j = 0; j < si->camnum; j++)
+						{
+							avcodec_send_packet(dec_cxt, NULL);
+							while (ret != AVERROR_EOF)
+							{
+								ret = avcodec_receive_frame(dec_cxt, drop_frame);
+								av_frame_free(&drop_frame);
+							}
+						}
+						has_decoded = 0;
+						goto skip_err;
+					}
+				}
+				has_decoded |= (1 << i);
+			}
+			timeout++;
+		}
+		has_decoded = has_decoded&(~failed_decoded);
+skip_err:
+		nFrame++;
+
+		if (has_decoded == decoded_mask)
+		{
+			//printf("%d frames decoded.\n", nFrame);
+			//submit_bigframe(cis->screen_no, 0, 0, (&si->yuv_frame[yuvbuf_offset*cis->camnum]), cis->dts[lastno].width, cis->dts[lastno].height, 8);
+			
+			si->submit_frame_to_stitch_count++;
+			yuvbuf_offset = (yuvbuf_offset + 1) % YUV_BUF_COUNT;
+		}
+		else
+		{
+			nFrame_drop++;
+
+		}
+		if ((nFrame % 200) == 199)
+		{
+			old_tick = tick;
+			tick = ::GetTickCount64();
+			printf("[Decoder]camera %s : Decoded_Frame Rate = %g fps, Drop_Frame_Rate = %g\n",
+				si->camera_name, (200.0 * 1000) / (tick - old_tick), nFrame_drop*1000.0 / (tick - old_tick));
+			nFrame_drop = 0;
+		}
+		for (i = 0; i < si->camnum; i++)
+			si->dts[i].output_offset++;
+		
+		
+	}
+
+	for (i = 0; i < si->camnum; i++)
+	{
+		//avfreep(&packet[i]);
+		if (packet != NULL)
+		{
+			av_packet_free(&packet);
+			packet = 0;
+		}
+		if (dec_cxt != NULL)
+		{
+			avcodec_free_context(&dec_cxt);
+			dec_cxt = 0;
+		}
+	}
+	Sleep(1000);
+	if (0)
+	{
+		for (j = 0; j < YUV_BUF_COUNT * 8; j++)
+		{
+			//av_frame_unref(yuv_frame[j*si->camnum + i]);
+			av_frame_free(&si->yuv_frame[j*si->camnum + i]);
+			si->yuv_frame[j*si->camnum + i] = NULL;
+		}
+	}
+	goto decoder_thread_restart;
+
+ENDDECODER:
+	for (i = 0; i < si->camnum; i++)
+	{
+		//avfreep(&packet[i]);
+		if (packet != NULL)
+		{
+			av_packet_free(&packet);
+			packet = 0;
+		}
+		if (dec_cxt != NULL)
+		{
+			avcodec_free_context(&dec_cxt);
+			dec_cxt = 0;
+		}
+		if(dec_cxt->hw_device_ctx!=NULL)
+			av_buffer_unref(&dec_cxt->hw_device_ctx);
+	}
+	for (j = 0; j < YUV_BUF_COUNT * 8; j++)
+	{
+		if (si->yuv_frame[j] != NULL)
+		{
+			av_frame_free(&si->yuv_frame[j]);
+			si->yuv_frame[j] = NULL;
+		}
+	}
+	return 0;
+}
+#else
 DWORD WINAPI decoder_thread(LPVOID lpParameter)
 {
 	SERVER_INFO *si = (SERVER_INFO *)lpParameter;
 	string path = si->datafilename;
-	int lastno= si->camnum-1;
+	int lastno = si->camnum - 1;
 	int initd = 0;
 	int i, j;
 	unsigned char has_keyframe = 0;
@@ -944,30 +1325,31 @@ DWORD WINAPI decoder_thread(LPVOID lpParameter)
 	int yuvbuf_offset = 0;
 	int ret;
 	int first_done_camera_no;
-	int64_t dts_std=0;
+	int64_t dts_std = 0;
 	unsigned long long nFrame = 0;
 	unsigned long long nFrame_drop = 0;
 	ULONGLONG tick, old_tick;
-	unsigned int decoded_mask=0;
-	AVFrame *hwFrame=NULL;
+	unsigned int decoded_mask = 0;
+	AVFrame *hwFrame = NULL;
 	printf("decoder start\n");
 decoder_thread_restart:
 	nFrame = 0;
 	nFrame_drop = 0;
 	AVCodec *codec_sw, *codec_hw;
-	codec_hw=codec_sw = avcodec_find_decoder(AV_CODEC_ID_H264);
+	codec_hw = codec_sw = avcodec_find_decoder(AV_CODEC_ID_H264);
 	if (!codec_sw) {
 		printf("Codec not found\n");
 		return -1;
 	}
 	if ((si->is_hwdec[0] + si->is_hwdec[1] + si->is_hwdec[2] + si->is_hwdec[3] + si->is_hwdec[4] + si->is_hwdec[5] + si->is_hwdec[6] + si->is_hwdec[7])> 0)
 	{
-		char hw_name[16]="asd";
+		char hw_name[16] = "asd";
 		type == AV_HWDEVICE_TYPE_NONE;
 		if (!strcmp(si->render_str, "Intel"))
 		{
 			strcpy(hw_name, "qsv");
-		}else if(!strcmp(si->render_str, "NVIDIA"))
+		}
+		else if (!strcmp(si->render_str, "NVIDIA"))
 		{
 			//strcpy(hw_name, "cuda");
 			strcpy(hw_name, "cuda");
@@ -996,7 +1378,7 @@ decoder_thread_restart:
 			}
 		}
 	}
-	
+
 	while (si->is_starting != 2)
 	{
 		Sleep(2000);
@@ -1019,7 +1401,7 @@ decoder_thread_restart:
 			//cis->dts[i].codec->capabilities = (cis->dts[i].codec->capabilities)|( AV_CODEC_CAP_AUTO_THREADS);
 			dec_cxt[i]->thread_count = 1;
 		}
-		
+
 		if (si->is_hwdec[i] == 1)
 		{
 			si->dts[i].codec = codec_hw;
@@ -1059,7 +1441,7 @@ decoder_thread_restart:
 		}
 		hwFrame = av_frame_alloc();
 	}
-	for (j = 0; j <  si->camnum; j++)
+	for (j = 0; j < si->camnum; j++)
 	{
 		if (drop_frame[j] != NULL)
 		{
@@ -1085,7 +1467,7 @@ decoder_thread_restart:
 				si->dts[i].output_offset++;
 				continue;
 			}
-			
+
 			packet[i]->data = frame_ptr[i];
 			packet[i]->size = si->dts[i].stream_frame_len[(si->dts[i].output_offset) % 256];
 			ret = avcodec_send_packet(dec_cxt[i], packet[i]);
@@ -1154,14 +1536,14 @@ decoder_thread_restart:
 			packet[i]->dts = (si->dts[lastno].output_offset);
 			if (si->dts[i].output_offset != si->dts[0].output_offset)
 			{
-				printf("diff dts %d:%llu  %d:%llu\n", i,si->dts[i].output_offset,0, si->dts[i].output_offset);
+				printf("diff dts %d:%llu  %d:%llu\n", i, si->dts[i].output_offset, 0, si->dts[i].output_offset);
 			}
 			ret = avcodec_send_packet(dec_cxt[i], packet[i]);
 			if (ret < 0) {
 				continue;
 			}
 		}
-		
+
 		int timeout = 0;
 		has_decoded = 0;
 		failed_decoded = 0;
@@ -1228,7 +1610,7 @@ decoder_thread_restart:
 					if (dts_std != si->yuv_frame[i + yuvbuf_offset*si->camnum]->pkt_dts)
 					{
 						FILE *err_log;
-						fopen_s(&err_log, "err.log","a+");
+						fopen_s(&err_log, "err.log", "a+");
 						fprintf(err_log, "dts_std=%llu err_std=");
 						for (j = 0; j < si->camnum; j++)
 						{
@@ -1255,14 +1637,14 @@ decoder_thread_restart:
 			timeout++;
 		}
 		has_decoded = has_decoded&(~failed_decoded);
-skip_err:
+	skip_err:
 		nFrame++;
 
 		if (has_decoded == decoded_mask)
 		{
 			//printf("%d frames decoded.\n", nFrame);
 			//submit_bigframe(cis->screen_no, 0, 0, (&si->yuv_frame[yuvbuf_offset*cis->camnum]), cis->dts[lastno].width, cis->dts[lastno].height, 8);
-			
+
 			si->submit_frame_to_stitch_count++;
 			yuvbuf_offset = (yuvbuf_offset + 1) % YUV_BUF_COUNT;
 		}
@@ -1281,8 +1663,8 @@ skip_err:
 		}
 		for (i = 0; i < si->camnum; i++)
 			si->dts[i].output_offset++;
-		
-		
+
+
 	}
 
 	for (i = 0; i < si->camnum; i++)
@@ -1325,7 +1707,7 @@ ENDDECODER:
 			avcodec_free_context(&dec_cxt[i]);
 			dec_cxt[i] = 0;
 		}
-		if(dec_cxt[i]->hw_device_ctx!=NULL)
+		if (dec_cxt[i]->hw_device_ctx != NULL)
 			av_buffer_unref(&dec_cxt[i]->hw_device_ctx);
 	}
 	for (j = 0; j < YUV_BUF_COUNT * 8; j++)
@@ -1338,3 +1720,4 @@ ENDDECODER:
 	}
 	return 0;
 }
+#endif
