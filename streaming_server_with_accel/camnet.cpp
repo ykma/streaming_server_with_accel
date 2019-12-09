@@ -160,6 +160,10 @@ DWORD WINAPI big_frame_receiver_machine_from_camera(LPVOID lpParameter)
 			ready_buf_offset = smi->recv_offset - smi->processed_offset;
 			if (ready_buf_offset >= total_frame_len)
 			{
+				if (0 && ready_buf_offset > (1024 * 1024))
+				{
+					printf("ready_buf_Mbytes=%d\n", ready_buf_offset / (1024 * 1024));
+				}
 				unsigned int channel_no;
 				unsigned int dstlen;
 				int is_disorder = 0;
@@ -185,6 +189,10 @@ DWORD WINAPI big_frame_receiver_machine_from_camera(LPVOID lpParameter)
 
 					ptr = smi->buf + (smi->processed_offset%buf_len);
 					j = buf_end - ptr;
+					//FILE *h264_fp;
+					//char h264_filename[256];
+					//sprintf_s(h264_filename, "h264-%d.h264", channel_no);
+					//fopen_s(&h264_fp, h264_filename, "ab");
 					if (j >= dstlen)
 					{
 						si->dts[channel_no].stream_frame[(si->dts[channel_no].input_offset) % 256] = ptr;
@@ -208,9 +216,11 @@ DWORD WINAPI big_frame_receiver_machine_from_camera(LPVOID lpParameter)
 						si->dts[channel_no].input_offset++;
 						frame_buf_tmp += dstlen;
 					}
-
+					//fwrite(si->dts[channel_no].stream_frame[(si->dts[channel_no].input_offset) % 256], 1, si->dts[channel_no].stream_frame_len[(si->dts[channel_no].input_offset) % 256], h264_fp);
+					//fclose(h264_fp);
 					smi->processed_offset += dstlen;
 				}
+				
 				fake_stamp++;
 				si->net_frame_count++;
 				//printf("%llu frames sumbitted from net\n", si->net_frame_count);
@@ -534,7 +544,7 @@ DWORD WINAPI file_recv_thread(LPVOID lpParameter)
 	while ((len = fread(buf, 1, 1024 * 1024, fp)) > 0)
 	{
 		offset = si->smi.recv_offset % (si->smi.buf_len);
-		if ((len + offset) < si->smi.buf_len)
+		if ((len + offset) <= si->smi.buf_len)
 		{
 			memcpy(si->smi.buf + offset, buf, len);
 		}
@@ -544,7 +554,7 @@ DWORD WINAPI file_recv_thread(LPVOID lpParameter)
 			memcpy(si->smi.buf, buf + (si->smi.buf_len - offset), len - (si->smi.buf_len - offset));
 		}
 		si->smi.recv_offset += len;
-		Sleep(350);
+		Sleep(330);
 	}
 	fclose(fp);
 	printf("file read done.\n");
@@ -553,7 +563,7 @@ DWORD WINAPI file_recv_thread(LPVOID lpParameter)
 	return 0;
 }
 extern char cvepano_version_str[64];
-#define RECV_LEN_ONE_PACKET (32*1024)
+#define RECV_LEN_ONE_PACKET (4*1024*1024)
 #define USE_TCP_TRANSPORT
 void recv_from_net(LPVOID lpParameter)
 {
@@ -564,7 +574,8 @@ void recv_from_net(LPVOID lpParameter)
 	DWORD tick = ::GetTickCount64();
 	DWORD tick_old = tick;
 	int bytes = 0;
-
+	FILE *fp_bigframe;
+	fopen_s(&fp_bigframe,"bigframe.dat","ab");
 	char str[256];
 	int nRecvBuf = 32 * 1024 * 1024;//ÉèÖÃ³É32M
 	int nSendBuf = 1 * 1024 * 1024;
@@ -608,7 +619,8 @@ void recv_from_net(LPVOID lpParameter)
 
 		int len = RECV_LEN_ONE_PACKET;
 		unsigned int offset = 0;
-		char buf[32 * 1024];
+		char *buf;
+		buf = (char *)malloc(RECV_LEN_ONE_PACKET);
 		printf("[Networking]Camera %s Start to connect %d.\n", si->camera_name, si->iport);
 		if (si->server_ipstr[0] != 0)
 		{
@@ -625,7 +637,7 @@ void recv_from_net(LPVOID lpParameter)
 		int retry = 0;
 		while (si->is_starting == 2)
 		{
-			offset = si->smi.recv_offset % (si->smi.buf_len);
+			
 			len = recv(*sock, buf, RECV_LEN_ONE_PACKET, 0);
 			ret = GetLastError();
 			if (len == -1)
@@ -662,14 +674,18 @@ void recv_from_net(LPVOID lpParameter)
 					exit(0);
 				}
 				retry++;
-				Sleep(300);
+				Sleep(50);
 				continue;
 			}
 			if (len == 0)
 				continue;
-			//fwrite(buf,1,len,fp_bigframe);
-			//fflush(fp_bigframe);
-			if ((len + offset) < si->smi.buf_len)
+			if (si->is_local_play == 0)
+			{
+				fwrite(buf, 1, len, fp_bigframe);
+				fflush(fp_bigframe);
+			}
+			offset = si->smi.recv_offset % (si->smi.buf_len);
+			if ((len + offset) <= si->smi.buf_len)
 			{
 				memcpy(si->smi.buf + offset, buf, len);
 			}

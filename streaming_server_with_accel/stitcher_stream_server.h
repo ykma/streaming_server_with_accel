@@ -11,7 +11,7 @@ extern "C"
 #include <winsock2.h>
 #include<Ws2tcpip.h>
 #include <Windows.h>
-#include<atomic>
+#include <atomic>
 #include "utils.h"
 #include "clFunction.h"
 #include"oclData.h"
@@ -25,7 +25,7 @@ extern "C"
 #define CMD_STREAM_CONTROL_START 1
 #define CMD_STREAM_CONTROL_CLOSE 2
 
-#define YUV_BUF_COUNT 30
+#define YUV_BUF_COUNT 50
 typedef struct bigframe
 {
 	void *avframe[8];
@@ -81,6 +81,14 @@ typedef struct
 	int submit_frame_avail[256];
 	unsigned int *max_stamp;
 	AVBufferRef *hw_device_ctx;
+	AVCodecContext *dec_cxt;
+	unsigned char *frame_ptr;
+	AVPacket *packet;
+	AVFrame *drop_frame;
+	int yuvbuf_offset;
+	HANDLE hdecode_mutex;
+	unsigned long long nRecvFrame;
+	AVFrame *yuv_frame[YUV_BUF_COUNT];
 }DECODER_THREAD_S;
 typedef struct {
 	string path;
@@ -117,9 +125,8 @@ typedef struct _SERVER_INFO
 	unsigned long long submit_frame_to_stitch_count;
 	unsigned long long frame_stitched_count;
 	unsigned long long stitch_real_frames_cnt;
-	CRITICAL_SECTION dec2stitch_lock;
+	HANDLE hstitch2pipe_mutex;
 	int write_to_pipe_ready;
-	AVFrame *yuv_frame[8 * YUV_BUF_COUNT];
 	char *yuv_stitch_buf[YUV_BUF_COUNT];
 	int stitch_buf_avaliable[YUV_BUF_COUNT];
 	int camera_width;
@@ -139,19 +146,25 @@ typedef struct _SERVER_INFO
 	int is_hwdec[8];
 	int is_dumpstream;
 	DUMP_STREAM_S *dss;
-	
+	unsigned int decoded_mask;
+	int sync_send_ok;
+	unsigned long long nSendFrame;
+	unsigned long long start_stitch_offset;
+	atomic_uchar decoded_frame_tag[YUV_BUF_COUNT];
+	atomic_uint stitch_ready_lastone_index;
 }SERVER_INFO;
 DWORD WINAPI file_recv_thread(LPVOID lpParameter);
 DWORD WINAPI networking_recv_thread(LPVOID lpParameter);
 DWORD WINAPI big_frame_receiver_machine(LPVOID lpParameter);
 DWORD WINAPI big_frame_receiver_machine_from_camera(LPVOID lpParameter);
-DWORD WINAPI decoder_thread(LPVOID lpParameter);
+DWORD WINAPI decoder_send_thread(LPVOID lpParameter);
+DWORD WINAPI decoder_recv_thread(LPVOID lpParameter);
 DWORD WINAPI stitch_update(LPVOID lpParameter);
 DWORD WINAPI write_to_pipe_encode(LPVOID lpParameter);
 DWORD WINAPI write_to_pipe_analyse(LPVOID lpParameter);
 DWORD WINAPI preview_thread(LPVOID lpParameter);
-DWORD WINAPI encode_deamon(LPVOID lpParameter);
 DWORD WINAPI dump_stream_thread(LPVOID lpParameter);
+SERVER_INFO *get_server_info(SERVER_INFO *si);
 void get_snap(LPVOID lpParameter);
 int stream_control(SERVER_INFO *si, int cmd, void *param);
 #endif

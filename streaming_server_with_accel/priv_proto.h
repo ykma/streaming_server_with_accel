@@ -9,6 +9,7 @@
 
 #define MAIN_STREAM_TCPPORT     (10460)
 #define SUB_STREAM_TCPPORT      (10462)
+#define ULTRA_STREAM_TCPPORT	(10464)
 #define MAGIC_VALUE             (0x8888)
 
 // 通信数据包格式定义...

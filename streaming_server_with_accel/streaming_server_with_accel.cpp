@@ -134,7 +134,6 @@ int init_server_info(SERVER_INFO *si)
 	{
 		si->yuv_stitch_buf[i] = (char *)malloc(4096*2160*3/2);
 	}
-	InitializeCriticalSection(&si->dec2stitch_lock);
 	return 0;
 }
 std::string TCHAR2STRING(TCHAR* str)
@@ -155,6 +154,15 @@ std::string TCHAR2STRING(TCHAR* str)
 	}
 
 	return strstr;
+}
+SERVER_INFO *get_server_info(SERVER_INFO *si)
+{
+	static SERVER_INFO *si_val;
+	if (si != NULL)
+	{
+		si_val = si;
+	}
+	return si_val;
 }
 int main(int argc, char **argv)
 {
@@ -213,9 +221,13 @@ int main(int argc, char **argv)
 		{
 			si->iport = MAIN_STREAM_TCPPORT;
 		}
-		else
+		else if (si->stream_id == 1)
 		{
 			si->iport = SUB_STREAM_TCPPORT;
+		}
+		else if (si->stream_id == 2)
+		{
+			si->iport = ULTRA_STREAM_TCPPORT;
 		}
 		printf("Directly Connect to Camera %s ( %s : %d )\n",si->camera_name, si->iipstr, si->iport);
 	}
@@ -225,8 +237,13 @@ int main(int argc, char **argv)
 		si->output_height = 1080;
 		printf("Auto set output_width to 1920 and output_height to 1080.\n");
 	}
-	CreateThread(0, 0, decoder_thread, (LPVOID)si, NULL, 0);
-	if(si->is_local_play == 0 && si->server_ipstr[0] ==0)
+	get_server_info(si);
+	for (int i = 0; i < si->camnum; i++)
+	{
+		CreateThread(0, 0, decoder_recv_thread, (LPVOID)i, NULL, 0);
+	}
+	CreateThread(0, 0, decoder_send_thread, (LPVOID)si, NULL, 0);
+	if(si->server_ipstr[0] ==0)
 	{
 		CreateThread(0, 0, big_frame_receiver_machine_from_camera, (LPVOID)si, NULL, 0);
 	}
@@ -247,6 +264,7 @@ int main(int argc, char **argv)
 	{
 		CreateThread(0, 0, stitch_update, (LPVOID)si, NULL, 0);
 	}
+	
 	CreateThread(0, 0, write_to_pipe_encode, (LPVOID)si, NULL, 0);
 	Sleep(300);
 	CreateThread(0, 0, write_to_pipe_analyse, (LPVOID)si, NULL, 0);
@@ -256,28 +274,43 @@ int main(int argc, char **argv)
 	//CreateThread(0, 0, encode_deamon, (LPVOID)si, NULL, 0);
 	unsigned long long sitich_cnt_old=0;
 	double stitch_fps = 0.0;
+	double decode_fps = 0.0;
 	long long stitch_queue=0;
 	int failed_cnt=0;
+	int i;
+	unsigned long long tmpvalue = 0;
+	unsigned long long decoder_frame_count_old = 0;
+	unsigned long long decoder_frame_count = 0;
+	while (si->sync_send_ok != 1)
+	{
+		Sleep(1000);
+	}
 	while (1)
 	{
 		Sleep(10000);
 		stitch_fps = (si->stitch_real_frames_cnt - sitich_cnt_old) / 10.0;
+		decoder_frame_count = 0;
+		for (i = 0; i < si->camnum; i++)
+		{
+			decoder_frame_count += si->dts[i].nRecvFrame;
+		}
+		decode_fps=(decoder_frame_count- decoder_frame_count_old) /(si->camnum* 10.0);
+		decoder_frame_count_old = decoder_frame_count;
 		stitch_queue = si->submit_frame_to_stitch_count - si->frame_stitched_count;
-		printf("[Stitch]camera %s : Stitched Frame Rate = %g fps  wait sitich queue=%d.(%llu, %llu, %llu)\n",
-			si->camera_name, stitch_fps,
-			stitch_queue, si->stitch_real_frames_cnt, si->submit_frame_to_stitch_count, si->frame_stitched_count);
-		if (stitch_fps == 0 || stitch_queue < 0)
+		printf("[Stitch]camera %s : Decoding Frame rate = %g / Stitched Frame Rate = %g fps.\n",
+			si->camera_name, decode_fps, stitch_fps);
+		if (stitch_fps == 0)
 		{
 			failed_cnt++;
 			if (failed_cnt > 2)
 			{
+				printf("stitch_fps is zero for too long. Try restart.\n");
 				exit(-2);
 			}
 		}
 		sitich_cnt_old = si->stitch_real_frames_cnt;
 	}
 	stream_control(si, CMD_STREAM_CONTROL_CLOSE, NULL);
-	DeleteCriticalSection(&si->dec2stitch_lock);
 	free(si);
     return 0;
 }
